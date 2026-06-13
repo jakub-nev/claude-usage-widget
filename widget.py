@@ -1,10 +1,12 @@
 import logging
+import threading
 import tkinter as tk
 from datetime import datetime, timezone
 from pathlib import Path
 
 from config import load_config, save_config
 from models import UsageSnapshot
+from usage_source import UsageProvider
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 LOG_PATH = Path(__file__).with_name("widget.log")
@@ -40,6 +42,7 @@ class Widget:
         root.geometry(f"+{cfg.pos_x}+{cfg.pos_y}")
         self._build_floating()
         self._bind_drag()
+        self._last_snap = None
 
     def _build_floating(self):
         self.frame = tk.Frame(self.root, bg=BG, padx=12, pady=10)
@@ -57,6 +60,8 @@ class Widget:
         self.status.pack(anchor="w")
 
     def render(self, snap: UsageSnapshot):
+        self._last_snap = snap
+
         def line(prefix, w):
             if w is None:
                 return f"{prefix}  --%"
@@ -65,6 +70,10 @@ class Widget:
         self.wk_label.config(text=line("7d", snap.weekly))
         color = DOT.get(snap.source, DOT["none"])
         self.status.config(fg=(DIM if snap.stale else color))
+
+    def refresh_countdown(self):
+        if self._last_snap is not None:
+            self.render(self._last_snap)
 
     def _bind_drag(self):
         self._drag = (0, 0)
@@ -86,16 +95,30 @@ def main():
     cfg = load_config(CONFIG_PATH)
     root = tk.Tk()
     widget = Widget(root, cfg)
-    # temporary sample render so we can see layout before wiring data
-    from models import WindowUsage
-    now = datetime.now(timezone.utc)
-    widget.render(UsageSnapshot(
-        five_hour=WindowUsage(37.0, now), weekly=WindowUsage(61.0, now),
-        source="live", stale=False, error=None, fetched_at=now))
+    provider = UsageProvider(budgets=cfg.budgets)
+    stop = threading.Event()
+
+    def poll_loop():
+        while not stop.is_set():
+            try:
+                snap = provider.get_snapshot()
+                root.after(0, widget.render, snap)
+            except Exception:                      # never let the thread die
+                logging.exception("poll loop error")
+            stop.wait(cfg.poll_seconds)
+
+    threading.Thread(target=poll_loop, daemon=True).start()
+
+    def tick():                                    # refresh countdown every 30s
+        widget.refresh_countdown()
+        root.after(30_000, tick)
+    root.after(30_000, tick)
 
     def on_close():
+        stop.set()
         save_config(cfg, CONFIG_PATH)
         root.destroy()
+    root.protocol("WM_DELETE_WINDOW", on_close)
     root.bind("<Escape>", lambda e: on_close())
     root.mainloop()
 
