@@ -155,7 +155,27 @@ class Widget:
             self.on_quit()
 
     def _recalibrate(self):
-        pass  # implemented in Task 11
+        which = self.cfg.featured
+        window = timedelta(hours=5) if which == "five_hour" else timedelta(days=7)
+        events = list(local_source.iter_usage_events(local_source.discover_log_paths()))
+        total, _ = local_source.aggregate_window(events, datetime.now(timezone.utc), window)
+        if total <= 0:
+            messagebox.showinfo("Recalibrate",
+                                "No recent token usage found to calibrate against.")
+            return
+        pct = simpledialog.askfloat(
+            "Recalibrate",
+            f"Open Claude Code, run /usage, and enter the {which} percentage it shows:",
+            minvalue=0.1, maxvalue=100.0)
+        if not pct:
+            return
+        budget = int(total / (pct / 100.0))
+        self.cfg.budgets[which] = budget
+        save_config(self.cfg, CONFIG_PATH)
+        messagebox.showinfo(
+            "Recalibrate",
+            f"Set {which} budget to {budget:,} tokens "
+            f"({total:,} tokens ≈ {pct:.0f}%).")
 
 
 def main():
