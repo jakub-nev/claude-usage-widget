@@ -111,9 +111,11 @@ class Widget:
     def toggle_mode(self):
         self.cfg.mode = "bar" if self.cfg.mode == "floating" else "floating"
         self._apply_mode()
+        save_config(self.cfg, CONFIG_PATH)
 
     def set_featured(self, which):
         self.cfg.featured = which
+        save_config(self.cfg, CONFIG_PATH)
         if self._last_snap is not None:
             self.render(self._last_snap)
 
