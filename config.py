@@ -34,6 +34,8 @@ def load_config(path) -> Config:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return cfg
+    if not isinstance(data, dict):
+        return cfg
     if isinstance(data.get("mode"), str):
         cfg.mode = data["mode"]
     if isinstance(data.get("featured"), str):
