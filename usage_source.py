@@ -4,7 +4,6 @@ from typing import Callable, Optional
 
 from models import UsageSnapshot
 from sources import live as live_source
-from sources import local as local_source
 
 log = logging.getLogger("usage_widget")
 
@@ -13,42 +12,34 @@ def _default_live() -> UsageSnapshot:
     return live_source.fetch()
 
 
-def _make_default_local(budgets: dict) -> Callable[[], UsageSnapshot]:
-    def _fetch() -> UsageSnapshot:
-        return local_source.fetch(budgets=budgets)
-    return _fetch
-
-
 class UsageProvider:
-    """Tries live then local; retains last-known snapshot for stale display."""
+    """Live-only usage with a last-known-good (stale) fallback.
 
-    def __init__(self,
-                 live_fetch: Callable[[], UsageSnapshot] = _default_live,
-                 local_fetch: Optional[Callable[[], UsageSnapshot]] = None,
-                 budgets: Optional[dict] = None):
+    The live /api/oauth/usage endpoint is the only accurate source. When a
+    fetch fails (e.g. HTTP 429 rate limiting, an expired token, or being
+    offline) the most recent successful snapshot is returned marked stale,
+    rather than a fabricated estimate. Before any successful fetch, an empty
+    snapshot (None windows) is returned so the UI can show a placeholder.
+    """
+
+    def __init__(self, live_fetch: Callable[[], UsageSnapshot] = _default_live):
         self._live = live_fetch
-        self._local = local_fetch or _make_default_local(budgets or {})
         self._last_good: Optional[UsageSnapshot] = None
 
     def get_snapshot(self) -> UsageSnapshot:
-        errors = []
-        for name, fetch in (("live", self._live), ("local", self._local)):
-            try:
-                snap = fetch()
-                self._last_good = snap
-                return snap
-            except Exception as exc:  # noqa: BLE001 - we degrade, never crash
-                log.warning("%s source failed: %s", name, exc)
-                errors.append(f"{name}: {exc}")
-
-        msg = "; ".join(errors)
-        if self._last_good is not None:
-            lg = self._last_good
+        try:
+            snap = self._live()
+            self._last_good = snap
+            return snap
+        except Exception as exc:  # noqa: BLE001 - we degrade, never crash
+            log.warning("live source failed: %s", exc)
+            if self._last_good is not None:
+                lg = self._last_good
+                return UsageSnapshot(
+                    five_hour=lg.five_hour, weekly=lg.weekly, source=lg.source,
+                    stale=True, error=str(exc), fetched_at=lg.fetched_at,
+                )
             return UsageSnapshot(
-                five_hour=lg.five_hour, weekly=lg.weekly, source=lg.source,
-                stale=True, error=msg, fetched_at=lg.fetched_at,
+                five_hour=None, weekly=None, source="none",
+                stale=True, error=str(exc), fetched_at=datetime.now(timezone.utc),
             )
-        return UsageSnapshot(
-            five_hour=None, weekly=None, source="none",
-            stale=True, error=msg, fetched_at=datetime.now(timezone.utc),
-        )

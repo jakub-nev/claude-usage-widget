@@ -5,7 +5,7 @@ from pathlib import Path
 DEFAULTS = {
     "mode": "floating",        # "floating" | "bar"
     "featured": "five_hour",   # which window the bar mode shows
-    "poll_seconds": 60,
+    "poll_seconds": 300,
     "budgets": {               # local-fallback token budgets per window
         "five_hour": 5_000_000,
         "weekly": 50_000_000,

@@ -1,13 +1,11 @@
 import logging
 import threading
 import tkinter as tk
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from tkinter import messagebox, simpledialog
 
 from config import load_config, save_config
 from models import UsageSnapshot
-from sources import local as local_source
 from usage_source import UsageProvider
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
@@ -29,6 +27,9 @@ BAR_W = 172            # progress-bar pixel dimensions
 BAR_H = 8
 
 
+POLL_MAX_DELAY = 1800   # cap backoff at 30 minutes
+
+
 def bar_color(percent):
     """Fill color by how full the window is: green -> amber -> red."""
     if percent >= 85:
@@ -36,6 +37,15 @@ def bar_color(percent):
     if percent >= 60:
         return AMBER
     return GREEN
+
+
+def next_delay(stale, current, base, max_delay=POLL_MAX_DELAY):
+    """Exponential backoff: double the wait after a failed (stale) fetch,
+    reset to the base interval after a successful one. Avoids hammering the
+    rate-limited live endpoint."""
+    if stale:
+        return min(max_delay, current * 2)
+    return base
 
 
 def fmt_countdown(resets_at):
@@ -179,8 +189,6 @@ class Widget:
         feat.add_command(label="5-hour", command=lambda: self.set_featured("five_hour"))
         feat.add_command(label="Weekly", command=lambda: self.set_featured("weekly"))
         self.menu.add_cascade(label="Bar shows…", menu=feat)
-        self.menu.add_command(label="Recalibrate local budget…",
-                              command=self._recalibrate)
         self.menu.add_separator()
         self.menu.add_command(label="Quit", command=self._quit)
         for w in (self.root, self.frame):
@@ -193,29 +201,6 @@ class Widget:
         if self.on_quit:
             self.on_quit()
 
-    def _recalibrate(self):
-        which = self.cfg.featured
-        window = timedelta(hours=5) if which == "five_hour" else timedelta(days=7)
-        events = list(local_source.iter_usage_events(local_source.discover_log_paths()))
-        total, _ = local_source.aggregate_window(events, datetime.now(timezone.utc), window)
-        if total <= 0:
-            messagebox.showinfo("Recalibrate",
-                                "No recent token usage found to calibrate against.")
-            return
-        pct = simpledialog.askfloat(
-            "Recalibrate",
-            f"Open Claude Code, run /usage, and enter the {which} percentage it shows:",
-            minvalue=0.1, maxvalue=100.0)
-        if not pct:
-            return
-        budget = int(total / (pct / 100.0))
-        self.cfg.budgets[which] = budget
-        save_config(self.cfg, CONFIG_PATH)
-        messagebox.showinfo(
-            "Recalibrate",
-            f"Set {which} budget to {budget:,} tokens "
-            f"({total:,} tokens ≈ {pct:.0f}%).")
-
 
 def main():
     cfg = load_config(CONFIG_PATH)
@@ -227,17 +212,21 @@ def main():
         root.destroy()
 
     widget = Widget(root, cfg, on_quit=on_close)
-    provider = UsageProvider(budgets=cfg.budgets)
+    provider = UsageProvider()
     stop = threading.Event()
+    base = cfg.poll_seconds
 
     def poll_loop():
+        delay = base
         while not stop.is_set():
             try:
                 snap = provider.get_snapshot()
                 root.after(0, widget.render, snap)
+                delay = next_delay(snap.stale, delay, base)
             except Exception:                      # never let the thread die
                 logging.exception("poll loop error")
-            stop.wait(cfg.poll_seconds)
+                delay = next_delay(True, delay, base)
+            stop.wait(delay)
 
     threading.Thread(target=poll_loop, daemon=True).start()
 
