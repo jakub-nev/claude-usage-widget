@@ -30,9 +30,12 @@ def _window(block: Optional[dict]) -> Optional[WindowUsage]:
     raw = block.get("utilization")
     if raw is None:
         return None
+    # The /api/oauth/usage endpoint returns utilization already on a 0..100
+    # scale (empirically confirmed against the live endpoint), so it is used
+    # as-is. Do NOT rescale small values: right after a reset, utilization is
+    # legitimately below 1 (e.g. 0.9 == 0.9%), and multiplying would wrongly
+    # report it as 90%.
     pct = float(raw)
-    if pct <= 1.0:          # 0..1 fraction -> percent
-        pct *= 100.0
     return WindowUsage(percent=pct, resets_at=_parse_ts(block.get("resets_at")))
 
 

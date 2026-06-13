@@ -19,13 +19,14 @@ def test_parse_usage_response_normalizes_windows():
     assert abs(snap.weekly.percent - 61.2) < 1e-6
 
 
-def test_parse_treats_fraction_scale_as_percent():
-    # if utilization comes as 0..1, it is scaled to 0..100
-    data = {"five_hour": {"utilization": 0.42, "resets_at": "2026-06-13T16:00:00Z"},
-            "seven_day": {"utilization": 0.10, "resets_at": "2026-06-18T09:00:00Z"}}
+def test_parse_uses_utilization_as_percent_without_rescaling():
+    # utilization is already 0..100; sub-1 values are real low percentages
+    # (e.g. just after a reset) and must NOT be multiplied up.
+    data = {"five_hour": {"utilization": 0.9, "resets_at": "2026-06-13T16:00:00Z"},
+            "seven_day": {"utilization": 8.0, "resets_at": "2026-06-18T09:00:00Z"}}
     snap = live.parse_usage(data, fetched_at=datetime(2026, 6, 13, tzinfo=timezone.utc))
-    assert abs(snap.five_hour.percent - 42.0) < 1e-6
-    assert abs(snap.weekly.percent - 10.0) < 1e-6
+    assert abs(snap.five_hour.percent - 0.9) < 1e-6
+    assert abs(snap.weekly.percent - 8.0) < 1e-6
 
 
 def test_fetch_uses_injected_token_and_http():
