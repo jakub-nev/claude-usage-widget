@@ -21,6 +21,22 @@ FG = "#cdd6f4"
 DIM = "#6c7086"
 DOT = {"live": "#a6e3a1", "local": "#f9e2af", "none": "#f38ba8"}
 
+TRACK = "#313244"      # progress-bar background
+GREEN = "#a6e3a1"
+AMBER = "#f9e2af"
+RED = "#f38ba8"
+BAR_W = 172            # progress-bar pixel dimensions
+BAR_H = 8
+
+
+def bar_color(percent):
+    """Fill color by how full the window is: green -> amber -> red."""
+    if percent >= 85:
+        return RED
+    if percent >= 60:
+        return AMBER
+    return GREEN
+
 
 def fmt_countdown(resets_at):
     if resets_at is None:
@@ -69,12 +85,31 @@ class Widget:
         self.fh_label = tk.Label(self.frame, text="5h  --%", bg=BG, fg=FG,
                                  font=("Segoe UI", 13, "bold"))
         self.fh_label.pack(anchor="w")
+        self.fh_bar = self._make_bar()
+        self.fh_bar["canvas"].pack(anchor="w", pady=(2, 7))
         self.wk_label = tk.Label(self.frame, text="7d  --%", bg=BG, fg=FG,
                                  font=("Segoe UI", 13, "bold"))
         self.wk_label.pack(anchor="w")
+        self.wk_bar = self._make_bar()
+        self.wk_bar["canvas"].pack(anchor="w", pady=(2, 2))
         self.status = tk.Label(self.frame, text="●", bg=BG, fg=DOT["none"],
                                font=("Segoe UI", 8))
         self.status.pack(anchor="w")
+
+    def _make_bar(self):
+        """Create a track + fill rectangle on a small Canvas."""
+        canvas = tk.Canvas(self.frame, width=BAR_W, height=BAR_H, bg=BG,
+                           highlightthickness=0, bd=0)
+        canvas.create_rectangle(0, 0, BAR_W, BAR_H, fill=TRACK, outline="")
+        fill = canvas.create_rectangle(0, 0, 0, BAR_H, fill=GREEN, outline="")
+        return {"canvas": canvas, "fill": fill}
+
+    def _set_bar(self, bar, w, stale):
+        pct = 0.0 if w is None else max(0.0, min(100.0, w.percent))
+        width = int(round(BAR_W * pct / 100.0))
+        color = DIM if stale else bar_color(pct)
+        bar["canvas"].coords(bar["fill"], 0, 0, width, BAR_H)
+        bar["canvas"].itemconfig(bar["fill"], fill=color)
 
     def _build_bar(self):
         self.frame = tk.Frame(self.root, bg=BG, padx=10, pady=4)
@@ -101,7 +136,9 @@ class Widget:
             self.bar_label.config(text=line(label, w))
         else:
             self.fh_label.config(text=line("5h", snap.five_hour))
+            self._set_bar(self.fh_bar, snap.five_hour, snap.stale)
             self.wk_label.config(text=line("7d", snap.weekly))
+            self._set_bar(self.wk_bar, snap.weekly, snap.stale)
         self.status.config(fg=color)
 
     def refresh_countdown(self):
